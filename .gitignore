@@ -20,3 +20,4 @@ pipeline/nextflow_nersc.config
 *.bak
 *.bak2
 *.before_*
+.tools/

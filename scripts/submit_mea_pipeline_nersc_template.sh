@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=mea_ephys
-#SBATCH --account=<YOUR_NERSC_ACCOUNT>
 #SBATCH --qos=regular
 #SBATCH --constraint=gpu
 #SBATCH --gpus=1
@@ -12,16 +11,32 @@
 
 set -euo pipefail
 
-# Load user-editable paths and settings
-# This allows the script to work even if sbatch is launched from another folder.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# SLURM copies submitted scripts to a spool directory.
+# SLURM_SUBMIT_DIR preserves the directory where sbatch was called.
+REPO_DIR="${SLURM_SUBMIT_DIR}"
 source "${REPO_DIR}/run_config.env"
 
-# Load software
+PIPELINE_DIR="${REPO_DIR}"
+PARAMS_FILE="${REPO_DIR}/scripts/params_no_motion.json"
+
+# Load the reproducible pipeline environment
 module load conda/Miniforge3-25.9.1-0
+source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "$CONDA_ENV"
-module load openjdk/17
+
+NEXTFLOW_BIN="${REPO_DIR}/.tools/nextflow"
+
+if [[ ! -x "$NEXTFLOW_BIN" ]]; then
+    echo "ERROR: Validated Nextflow installation not found:"
+    echo "  $NEXTFLOW_BIN"
+    echo "Run: bash scripts/setup_nersc.sh"
+    exit 1
+fi
+
+echo "Nextflow: $NEXTFLOW_BIN"
+echo "Java:     $(command -v java)"
+"$NEXTFLOW_BIN" -version
+java -version
 
 # Make required folders
 mkdir -p "$RESULTS_PATH" "$WORK_DIR" "$LOG_DIR" "$TMPDIR" "$KACHERY_DIR"
@@ -37,7 +52,7 @@ export RESULTS_PATH="$RESULTS_PATH"
 # Run pipeline
 cd "$PIPELINE_DIR/pipeline"
 
-nextflow -C nextflow_nersc_template.config \
+"$NEXTFLOW_BIN" -C nextflow_nersc_template.config \
   -log "$RESULTS_PATH/nextflow/nextflow.log" \
   run main_multi_backend.nf \
   --input nwb \

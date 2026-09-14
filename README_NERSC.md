@@ -1,15 +1,97 @@
-# Running the MEA Ephys Nextflow Pipeline on NERSC
+# MEA Ephys Pipeline on NERSC
 
-This guide explains how to run the MEA electrophysiology Nextflow pipeline on NERSC using reusable template files.
+Reusable NERSC/Perlmutter setup for the MEA electrophysiology Nextflow pipeline.
 
-Users only need to edit:
+The NERSC setup has been validated with:
 
-1. Copy `run_config.example.env` to `run_config.env`, then edit `run_config.env`
-2. The NERSC account line in `scripts/submit_mea_pipeline_nersc_template.sh`
+- Nextflow 23.08.0-edge
+- Java 17
+- Python 3.11
+- NWB input
+- Kilosort4 GPU spike sorting
+- preprocessing
+- postprocessing
+- curation
+- visualization
+- report generation
+- burst detection
+- NWB export
 
-## What the pipeline does
+## Quick start
 
-The pipeline runs:
+### 1. Clone the NERSC branch
+
+```bash
+git clone -b nersc-reusable-setup \
+  https://github.com/BenShalomLab/MEA-ephys-pipeline.git
+
+cd MEA-ephys-pipeline
+```
+
+### 2. Set up the NERSC environment
+
+```bash
+bash scripts/setup_nersc.sh
+```
+
+This automatically:
+
+- initializes the Allen Neural Dynamics Git submodule
+- creates or updates the `env_ephys` Conda environment
+- installs Nextflow 23.08.0-edge
+- installs Java 17
+- verifies the installed versions
+
+Users do not need to install Java or Nextflow manually or modify `.bashrc`. The setup script installs Java through Conda and pins the validated Nextflow 23.08.0-edge executable inside the repository.
+
+### 3. Create the run configuration
+
+```bash
+cp run_config.example.env run_config.env
+nano run_config.env
+```
+
+Normally only two values need to be changed:
+
+```bash
+export NERSC_ACCOUNT=<YOUR_NERSC_ACCOUNT>
+export PROJECT_DIR=/pscratch/sd/<first-letter>/<username>/mea_pipeline_run
+```
+
+### 4. Add input data
+
+Put NWB input files in:
+
+```text
+$PROJECT_DIR/data
+```
+
+### 5. Submit the pipeline
+
+From the repository root:
+
+```bash
+scripts/run_nersc.sh
+```
+
+The launcher reads `run_config.env`, creates the required directories, and submits the SLURM job with the selected NERSC account.
+
+## Monitor the run
+
+```bash
+squeue -u $USER
+```
+
+To follow Nextflow:
+
+```bash
+source run_config.env
+tail -f "$RESULTS_PATH/nextflow/nextflow.log"
+```
+
+The pipeline uses `-resume`, so completed processes can be reused when the same work directory is retained.
+
+## Pipeline stages
 
 1. job dispatch
 2. preprocessing
@@ -22,210 +104,111 @@ The pipeline runs:
 9. results collection
 10. NWB export
 
-Nextflow uses `-resume`, so completed steps can be reused instead of rerunning everything.
+## Configuration files
 
+Main reusable configuration files:
 
-## How the code is organized
+```text
+run_config.example.env
+environment/nersc.yml
+pipeline/nextflow_nersc_template.config
+pipeline/capsule_versions.env
+scripts/params_no_motion.json
+```
 
-Most users only need to clone this main repository:
+`pipeline/capsule_versions.env` is the source of truth for tested capsule versions.
 
-    BenShalomLab/MEA-ephys-pipeline
+The validated SpikeInterface version is:
 
-The workflow also uses a few separate capsule repositories. Users do not need to clone these manually. The pipeline downloads the pinned versions automatically during the run. These repositories must be public/readable, or the user must have GitHub access.
+```text
+0.103.2
+```
 
-Separate capsule repositories used by the workflow:
-
-    Varda006/aind-ephys-preprocessing
-    Varda006/aind-ephys-curation
-    Varda006/aind-ecephys-nwb
-
-These are kept separate so each pipeline block can be versioned and updated independently. The exact tested versions are pinned in:
-
-    pipeline/capsule_versions.env
-
-### What was modified in the separate capsule repos
-
-#### aind-ephys-preprocessing
-
-This repo contains the preprocessing capsule used before spike sorting.
-
-In this NERSC setup, it is used as the validated preprocessing block for preparing MEA/NWB recordings before Kilosort4. Keeping it as a separate repo allows preprocessing fixes to be made and pinned without copying the whole capsule into the main workflow repository.
-
-#### aind-ephys-curation
-
-This repo contains the curation capsule used after postprocessing.
-
-The pipeline computes many quality metrics during postprocessing and curation. The current default filtering rule uses a small subset of those metrics:
-
-    isi_violations_ratio < 0.5 and presence_ratio > 0.8 and firing_rate > 0.1
-
-This rule keeps units that are active enough, consistently present, and have lower contamination. Users can later modify the curation rule to include additional metrics depending on their experiment.
-
-#### aind-ecephys-nwb
-
-This repo contains the NWB export capsule.
-
-It is used to write processed electrophysiology outputs and curated units into NWB-compatible output. Keeping this capsule separate makes it easier to update NWB export behavior while keeping the main workflow stable.
-
-### Local capsules kept in this main repo
-
-Two custom capsules are kept directly inside this main repository because they are part of the NERSC-validated workflow:
-
-    capsules/report_generation
-    capsules/burst_detection
-
-These two folders were compared against the successful NERSC run work directories and match the code used during validation.
-
-
-## Files users edit
-
-### 1. `run_config.env`
-
-Start by copying the example file:
-
-    cp run_config.example.env run_config.env
-
-Then edit `run_config.env`. This file controls paths for the run.
-
-Main value to update:
-
-    export PROJECT_DIR=/path/to/your/project_folder
-
-Example:
-
-    export PROJECT_DIR=/pscratch/sd/<first-letter>/<username>/mea_pipeline_run
-
-Other paths are built automatically:
-
-    export PIPELINE_DIR=${PROJECT_DIR}/MEA-ephys-pipeline
-    export DATA_DIR=${PROJECT_DIR}/data
-    export RESULTS_PATH=${PROJECT_DIR}/results
-    export WORK_DIR=${PROJECT_DIR}/nextflow_work
-    export LOG_DIR=${PROJECT_DIR}/logs
-    export TMPDIR=${PROJECT_DIR}/tmp
-    export KACHERY_DIR=${PROJECT_DIR}/tmp/kachery
-    export PARAMS_FILE=${PIPELINE_DIR}/scripts/params_no_motion.json
-    export CONDA_ENV=env_ephys
-
-### 2. `scripts/submit_mea_pipeline_nersc_template.sh`
-
-Update this line:
-
-    #SBATCH --account=<YOUR_NERSC_ACCOUNT>
-
-Example:
-
-    #SBATCH --account=m2043
-
-## Folder setup
-
-Create the required folders:
-
-    mkdir -p $PROJECT_DIR/data
-    mkdir -p $PROJECT_DIR/results
-    mkdir -p $PROJECT_DIR/nextflow_work
-    mkdir -p $PROJECT_DIR/logs
-    mkdir -p $PROJECT_DIR/tmp/kachery
-    mkdir -p $PROJECT_DIR/scripts
-
-Put the input NWB or MEA files in:
-
-    $DATA_DIR
-
-## Parameter file
-
-The default parameter file is:
-
-    scripts/params_no_motion.json
-
-The pipeline computes many quality metrics during postprocessing and curation. The current default curation rule uses a small subset of those metrics:
-
-    isi_violations_ratio < 0.5 and presence_ratio > 0.8 and firing_rate > 0.1
-
-This means the pipeline keeps units that are active enough, consistently present, and have lower contamination. Users can later modify the curation rule to include additional metrics depending on their experiment.
-
-## Submit the run
-
-From the repository folder:
-
-    sbatch scripts/submit_mea_pipeline_nersc_template.sh
-
-## Check job status
-
-    squeue -u $USER
-
-`PD` means the job is pending.  
-`R` means the job is running.
-
-If the job disappears from the queue, it either completed or failed. Check the Nextflow log.
-
-## Check pipeline progress
-
-    grep "Cached process\|Submitted process\|ERROR\|failed\|Workflow completed" $RESULTS_PATH/nextflow/nextflow.log | tail -100
-
-A successful run should show:
-
-    Workflow completed
-    failedCount=0
+Do not independently hardcode a different SpikeInterface version in the NERSC setup.
 
 ## Main outputs
 
-Final outputs are saved in:
+Results are written under:
 
-    $RESULTS_PATH
+```text
+$PROJECT_DIR/results
+```
 
-Important folders:
+Important output directories include:
 
-    results/nwb
-    results/spikesorted
-    results/curated
-    results/postprocessed
-    results/visualization
-    results/nextflow
+```text
+results/nwb
+results/spikesorted
+results/curated
+results/postprocessed
+results/visualization
+results/nextflow
+```
 
-Important Nextflow summary files:
+Nextflow summary files include:
 
-    results/nextflow/dag.html
-    results/nextflow/report.html
-    results/nextflow/timeline.html
-    results/nextflow/trace.txt
+```text
+results/nextflow/dag.html
+results/nextflow/report.html
+results/nextflow/timeline.html
+results/nextflow/trace.txt
+```
 
-## Report generation outputs
+## Custom analysis outputs
 
-Report generation produces files such as:
+Report generation may produce:
 
-    waveforms_grid.pdf
-    locations_unfiltered.pdf
-    locations_206_units.pdf
-    metrics_curated.xlsx
-    qm_unfiltered.xlsx
-    rejection_log.xlsx
-    report_summary.json
-    spike_times.npy
+```text
+waveforms_grid.pdf
+locations_unfiltered.pdf
+locations_206_units.pdf
+metrics_curated.xlsx
+qm_unfiltered.xlsx
+rejection_log.xlsx
+report_summary.json
+spike_times.npy
+```
 
-## Burst detection outputs
+Burst detection may produce:
 
-Burst detection produces files such as:
+```text
+network_results.json
+raster_burst_plot.png
+raster_burst_plot.svg
+raster_burst_plot_30s.png
+raster_burst_plot_30s.svg
+raster_burst_plot_60s.svg
+burst_detection.log
+```
 
-    network_results.json
-    raster_burst_plot.png
-    raster_burst_plot.svg
-    raster_burst_plot_30s.png
-    raster_burst_plot_30s.svg
-    raster_burst_plot_60s.svg
-    burst_detection.log
+## Curation
 
-## Reusable files
+The default parameter file is:
 
-The reusable NERSC files are:
+```text
+scripts/params_no_motion.json
+```
 
-    run_config.example.env
-    pipeline/nextflow_nersc_template.config
-    scripts/submit_mea_pipeline_nersc_template.sh
-    scripts/params_no_motion.json
+The current default curation rule is:
 
-The validated Varda-specific config is kept separately as:
+```text
+isi_violations_ratio < 0.5 and presence_ratio > 0.8 and firing_rate > 0.1
+```
 
-    pipeline/nextflow_nersc_local.config
+Users can modify the curation criteria for their experiment.
 
-Do not rely on another user's `/pscratch` folder. Each user should set their own `PROJECT_DIR`.
+## Troubleshooting notes
+
+Java is installed inside the `env_ephys` Conda environment. The validated Nextflow 23.08.0-edge executable is installed separately under `.tools/nextflow` by `scripts/setup_nersc.sh`.
+
+Do not add:
+
+```text
+module load openjdk/17
+```
+
+That module was not available on Perlmutter during testing.
+
+Do not add guessed HTTP or HTTPS proxy settings unless required by current NERSC documentation.
+
+If a container runtime fails, troubleshoot the runtime separately before changing Python, SpikeInterface, or capsule versions.

@@ -1,0 +1,13 @@
+name: env_ephys
+
+channels:
+  - conda-forge
+  - bioconda
+
+dependencies:
+  - python=3.11
+  - openjdk=17
+  - numpy
+  - matplotlib
+  - pandas
+  - openpyxl
