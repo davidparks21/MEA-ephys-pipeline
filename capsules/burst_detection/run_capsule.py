@@ -297,7 +297,15 @@ def main():
     logger.info(f"Loaded {len(spike_times)} units")
 
     if not spike_times:
-        logger.error("No spike times found."); sys.exit(1)
+        result = {
+            "status": "no_spikes", "n_units": 0,
+            "burstlets": {"events": []}, "network_bursts": {"events": []},
+            "superbursts": {"events": []},
+            "timestamp": str(datetime.now()),
+        }
+        (output_dir / "network_results.json").write_text(json.dumps(result, indent=2))
+        logger.info("No spikes survived report curation; saved an empty burst result.")
+        return
 
     logger.info("Running burst detector...")
     try:
@@ -316,6 +324,7 @@ def main():
 
     clean_data = recursive_clean(network_data)
     clean_data["n_units"] = len(spike_times)
+    clean_data["status"] = "ok"
     clean_data["timestamp"] = str(datetime.now())
     temp_file = output_dir / "network_results.tmp.json"
     final_file = output_dir / "network_results.json"

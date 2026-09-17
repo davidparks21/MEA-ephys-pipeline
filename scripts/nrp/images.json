@@ -1,0 +1,7 @@
+{
+  "driver": "braingeneers/workflows-nextflow-runner@sha256:0207c6c32f848e40987b04c6e2ee78f85c43aad2a694ac861ea64a998c2ae900",
+  "transfer": "amazon/aws-cli@sha256:97cc5f847898f54432492c128408c62e0df2153d9ad36573be8e5a03826123b0",
+  "base": "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-base@sha256:a9728fa63078b0429e4c85b5918d7286d4c3f6ed5def900f9876540513adec03",
+  "ks4": "ghcr.io/allenneuraldynamics/aind-ephys-spikesort-kilosort4@sha256:b5192e8b2b4f62f07b98ed693f23a192dff04c119e744946ac000589026b8165",
+  "nwb": "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-nwb@sha256:03ad8e8572ad1e98da9d35c380e8fad23de895731d2d382fd9e18376dd61ab4b"
+}

@@ -1,8 +1,10 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl = 2
 
-params.ecephys_path = DATA_PATH
+params.ecephys_path = System.getenv('DATA_PATH') ?: System.getenv('DATA_DIR')
+params.results_path = System.getenv('RESULTS_PATH') ?: "${launchDir}/results"
 params.params_file = null
+params.torch_device = null
 
 // Git repository prefix - can be overridden via command line or environment variable
 params.git_repo_prefix = System.getenv('GIT_REPO_PREFIX') ?: 'https://github.com/AllenNeuralDynamics/aind-'
@@ -23,17 +25,25 @@ clone_repo() {
 }
 '''
 
-println "DATA_PATH: ${DATA_PATH}"
-println "RESULTS_PATH: ${RESULTS_PATH}"
+if (!params.ecephys_path) {
+    error 'Set --ecephys_path to a directory containing an NWB recording (or set DATA_PATH / DATA_DIR).'
+}
+println "DATA_PATH: ${params.ecephys_path}"
+println "RESULTS_PATH: ${params.results_path}"
 
 // Load parameters from JSON file if provided
 def json_params = [:]
 if (params.params_file) {
     json_params = new groovy.json.JsonSlurper().parseText(new File(params.params_file).text)
+    if (!(json_params instanceof Map)) {
+        error '--params_file must contain a JSON object keyed by pipeline stage.'
+    }
+    def unknown = json_params.keySet() - ['job_dispatch', 'preprocessing', 'spikesorting', 'postprocessing', 'curation', 'visualization', 'nwb']
+    if (unknown) {
+        error "Unknown stage keys in --params_file: ${unknown}. See scripts/params_no_motion.json for the nested format."
+    }
     println "Loaded parameters from ${params.params_file}"
 }
-
-println "PARAMS: ${params}"
 
 // get commit hashes for capsules
 params.capsule_versions = "${baseDir}/capsule_versions.env"
@@ -133,9 +143,7 @@ if (params.params_file && json_params.spikesorting) {
     sorter = json_params.spikesorting.sorter ?: null
 }
 
-if (sorter == null && "sorter" in params_keys) {
-    sorter = params.sorter ?: "kilosort4"
-}
+sorter = sorter ?: params.get('sorter', 'kilosort4')
 
 def spikesorting_args = ""
 if (params.params_file && json_params.spikesorting) {
@@ -143,13 +151,29 @@ if (params.params_file && json_params.spikesorting) {
     if (sorter_params) {
         spikesorting_args = "--params '${groovy.json.JsonOutput.toJson(sorter_params)}'"
     }
-} else if ("spikesorting_args" in params_keys) {
+} else if ("spikesorting_args" in params_keys && params.spikesorting_args instanceof String) {
     spikesorting_args = params.spikesorting_args
+} else if ("spikesorting_args" in params_keys) {
+    error 'Use --spikesorting_args="--flag" (with an equals sign), or the nested --params_file format.'
 }
 
 if (sorter == null) {
     println "No sorter specified, defaulting to kilosort4"
     sorter = "kilosort4"
+}
+
+// Force an explicit device for CPU/GPU comparisons. Keep the pinned capsule defaults.
+if (params.torch_device) {
+    if (sorter != 'kilosort4' || !(params.torch_device in ['cpu', 'cuda'])) {
+        error '--torch_device must be cpu or cuda and requires --sorter kilosort4.'
+    }
+    if (params.get('spikesorting_args', null)) {
+        error 'Use --params_file with --torch_device so the selected device cannot be overridden by raw arguments.'
+    }
+    def settings = json_params.spikesorting?.kilosort4 ?:
+        new groovy.json.JsonSlurper().parseText(file("${baseDir}/kilosort4_defaults.json").text)
+    settings.sorter.torch_device = params.torch_device
+    spikesorting_args = "--params '${groovy.json.JsonOutput.toJson(settings)}'"
 }
 
 println "Using SORTER: ${sorter} with args: ${spikesorting_args}"
@@ -183,6 +207,9 @@ process job_dispatch {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -221,6 +248,7 @@ process preprocessing {
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-base:${params.container_tag}"
 
     input:
+    path local_code, stageAs: 'capsule-source'
     val max_duration_minutes
     path ecephys_session_input, stageAs: 'capsule/data/ecephys_session'
     path job_dispatch_results, stageAs: 'capsule/data/*'
@@ -232,6 +260,9 @@ process preprocessing {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -244,14 +275,13 @@ process preprocessing {
         export N_JOBS_EXT=${task.cpus}
     fi
 
-    echo "[${task.tag}] cloning git repo..."
-    ${gitCloneFunction}
-    clone_repo "https://github.com/Varda006/aind-ephys-preprocessing.git" "${versions['PREPROCESSING']}"
+    echo "[${task.tag}] staging local capsule code..."
+    cp -rL capsule-source capsule/code
+    # Vendored at the original pin; see capsules/preprocessing/UPSTREAM.md.
 
     echo "[${task.tag}] running capsule..."
     cd capsule/code
-    chmod +x run
-    ./run ${preprocessing_args} ${job_args}
+    bash run ${preprocessing_args} ${job_args}
 
     echo "[${task.tag}] completed!"
     """
@@ -272,6 +302,9 @@ process spikesort_kilosort25 {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -312,6 +345,9 @@ process spikesort_kilosort4 {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -352,6 +388,9 @@ process spikesort_spykingcircus2 {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -392,6 +431,9 @@ process spikesort_lupin {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -435,6 +477,9 @@ process postprocessing {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -475,6 +520,9 @@ process curation {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -520,6 +568,9 @@ process visualization {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -549,7 +600,7 @@ process results_collector {
     tag 'result-collector'
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-base:${params.container_tag}"
 
-    publishDir "$RESULTS_PATH", saveAs: { filename -> new File(filename).getName() }, mode: 'copy'
+    publishDir "${params.results_path}", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: true
 
     input:
     val max_duration_minutes
@@ -570,6 +621,9 @@ process results_collector {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -587,7 +641,7 @@ process results_collector {
     echo "[${task.tag}] running capsule..."
     cd capsule/code
     chmod +x run
-    ./run --pipeline-data-path ${DATA_PATH} --pipeline-results-path ${RESULTS_PATH}
+    ./run --pipeline-data-path ${params.ecephys_path} --pipeline-results-path ${params.results_path}
 
     echo "[${task.tag}] completed!"
     """
@@ -610,6 +664,9 @@ process quality_control {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -639,7 +696,7 @@ process quality_control_collector {
     tag 'qc-collector'
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-base:${params.container_tag}"
 
-    publishDir "$RESULTS_PATH", saveAs: { filename -> new File(filename).getName() }, mode: 'copy'
+    publishDir "${params.results_path}", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: true
 
     input:
     val max_duration_minutes
@@ -652,6 +709,9 @@ process quality_control_collector {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -681,6 +741,7 @@ process nwb_ecephys {
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-nwb:${params.container_tag}"
 
     input:
+    path local_code, stageAs: 'capsule-source'
     val max_duration_minutes
     path ecephys_session_input, stageAs: 'capsule/data/ecephys_session'
     path job_dispatch_results, stageAs: 'capsule/data/*'
@@ -692,6 +753,9 @@ process nwb_ecephys {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -704,14 +768,13 @@ process nwb_ecephys {
         export N_JOBS_EXT=${task.cpus}
     fi
 
-    echo "[${task.tag}] cloning git repo..."
-    ${gitCloneFunction}
-    clone_repo "https://github.com/Varda006/aind-ecephys-nwb.git" "${versions['NWB_ECEPHYS']}"
+    echo "[${task.tag}] staging local capsule code..."
+    cp -rL capsule-source capsule/code
+    # Vendored at the original pin; see capsules/nwb_ecephys/UPSTREAM.md.
 
     echo "[${task.tag}] running capsule..."
     cd capsule/code
-    chmod +x run
-    ./run ${nwb_ecephys_args}
+    bash run ${nwb_ecephys_args}
 
     echo "[${task.tag}] completed!"
     """
@@ -721,7 +784,7 @@ process nwb_units {
     tag 'nwb-units'
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-nwb:${params.container_tag}"
 
-    publishDir "$RESULTS_PATH/nwb", saveAs: { filename -> new File(filename).getName() }, mode: 'copy'
+    publishDir "${params.results_path}/nwb", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: true
 
     input:
     val max_duration_minutes
@@ -737,6 +800,9 @@ process nwb_units {
     """
     #!/usr/bin/env bash
     set -e
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -761,77 +827,63 @@ process nwb_units {
 }
 
 process report_generation {
-    tag 'report-generation'
-
+    tag { "report-generation:${recording_id}" }
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-base:${params.container_tag}"
+    publishDir "${params.results_path}/reports", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: true
 
-    maxForks 1
     input:
-    val max_duration_minutes
-    path postprocessing_results, stageAs: 'capsule/data/postprocessed'
-    path curation_results, stageAs: 'capsule/data/curated'
+    tuple val(recording_id), path(analyzer, stageAs: 'capsule/data/analyzer.zarr')
+    path report_code, stageAs: 'capsule/code'
+
     output:
-    path 'capsule/results/*', emit: results
+    tuple val(recording_id), path('capsule/results/*'), emit: results
+
     script:
     """
     #!/usr/bin/env bash
     set -e
-    mkdir -p capsule/results
-    echo "[report-generation] cloning git repo..."
-
-    git clone https://github.com/BenShalomLab/MEA-ephys-pipeline.git mea-repo
-    cp -r mea-repo/capsules/report_generation/. capsule/code/
-    rm -rf mea-repo
-    echo "[report-generation] running capsule..."
-    for f in capsule/data/postprocessed*; do ANALYZER=\$f; done
-    echo "Found analyzer: \$ANALYZER"
-    python -m pip install openpyxl -q --no-cache-dir --target /tmp/pydeps
-    export PYTHONPATH=/tmp/pydeps:$PYTHONPATH
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    mkdir -p 'capsule/results/${recording_id}'
+    python -m pip install openpyxl==3.1.5 --no-deps -q --no-cache-dir --target capsule/pydeps
+    python -m pip install et-xmlfile==2.0.0 --no-deps -q --no-cache-dir --target capsule/pydeps
+    export PYTHONPATH="\$(pwd)/capsule/pydeps:\${PYTHONPATH:-}"
     python capsule/code/run_capsule.py \
-
-        --analyzer-dir "\$ANALYZER" \
-        --output-dir capsule/results \
+        --analyzer-dir capsule/data/analyzer.zarr \
+        --output-dir 'capsule/results/${recording_id}' \
         --thresholds '{"firing_rate": 0.1, "presence_ratio": 0.8}'
-    echo "[report-generation] completed!"
     """
 }
 
 process burst_detection {
-    tag 'burst-detection'
-
+    tag { "burst-detection:${recording_id}" }
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-base:${params.container_tag}"
+    publishDir "${params.results_path}/bursts", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: true
 
-    maxForks 1
     input:
-    val max_duration_minutes
-    path report_results, stageAs: 'capsule/data/reports'
+    tuple val(recording_id), path(spike_times, stageAs: 'capsule/data/spike_times.npy')
+    path burst_code, stageAs: 'capsule/code'
+
     output:
-    path 'capsule/results/*', emit: results
+    tuple val(recording_id), path('capsule/results/*'), emit: results
+
     script:
     """
     #!/usr/bin/env bash
     set -e
-    mkdir -p capsule/results
-    echo "[burst-detection] cloning git repo..."
-
-    git clone https://github.com/BenShalomLab/MEA-ephys-pipeline.git mea-repo
-    cp -r mea-repo/capsules/burst_detection/. capsule/code/
-    rm -rf mea-repo
-    echo "[burst-detection] running capsule..."
-    for f in capsule/data/reports*; do readlink "\$f" | grep -q spike_times && SPIKE_TIMES="\$f" && break; done
-    echo "Found spike times: \$SPIKE_TIMES"
+    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
+    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
+    mkdir -p 'capsule/results/${recording_id}'
     python capsule/code/run_capsule.py \
-
-        --spike-times "\$SPIKE_TIMES" \
-        --output-dir capsule/results \
+        --spike-times capsule/data/spike_times.npy \
+        --output-dir 'capsule/results/${recording_id}' \
         --plot-mode separate
-    echo "[burst-detection] completed!"
     """
 }
 
 workflow {
     // Input channel from ecephys path
-    ecephys_ch = Channel.fromPath(params.ecephys_path + "/", type: 'any')
+    ecephys_ch = Channel.fromPath(params.ecephys_path, type: 'dir', checkIfExists: true)
 
     // Job dispatch
     job_dispatch_out = job_dispatch(ecephys_ch.collect())
@@ -842,6 +894,7 @@ workflow {
 
     // Preprocessing
     preprocessing_out = preprocessing(
+        Channel.value(file("${baseDir}/../capsules/preprocessing/code")),
         max_duration_minutes,
         ecephys_ch.collect(),
         job_dispatch_out.results.flatten()
@@ -914,17 +967,17 @@ workflow {
 
 
 
-    // Report generation
+    // Stage the code in this checkout and select one analyzer explicitly per recording.
+    analyzer_ch = postprocessing_out.results.flatten()
+        .filter { it.name.startsWith('postprocessed_') && it.name.endsWith('.zarr') }
+        .map { analyzer -> tuple(analyzer.name.replaceFirst(/^postprocessed_/, '').replaceFirst(/\.zarr$/, ''), analyzer) }
     report_generation_out = report_generation(
-        max_duration_minutes,
-        postprocessing_out.results.collect(),
-        curation_out.results.collect()
+        analyzer_ch,
+        Channel.value(file("${baseDir}/../capsules/report_generation"))
     )
-
-    // Burst detection
     burst_detection(
-        max_duration_minutes,
-        report_generation_out.results.collect()
+        report_generation_out.results.map { id, folder -> tuple(id, folder.resolve('spike_times.npy')) },
+        Channel.value(file("${baseDir}/../capsules/burst_detection"))
     )
     // Quality control disabled for NERSC debug run
     // Reason: QC currently fails on unsigned raw data during highpass filtering.
@@ -956,6 +1009,7 @@ workflow {
 
     // NWB ecephys
     nwb_ecephys_out = nwb_ecephys(
+        Channel.value(file("${baseDir}/../capsules/nwb_ecephys/code")),
         max_duration_minutes,
         ecephys_ch.collect(),
         job_dispatch_out.results.collect(),

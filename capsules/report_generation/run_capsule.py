@@ -17,6 +17,13 @@ import matplotlib.backends.backend_pdf as pdf
 
 import spikeinterface.full as si
 
+DEFAULT_THRESHOLDS = {
+    'presence_ratio': 0.75,
+    'rp_contamination': 0.15,
+    'firing_rate': 0.05,
+    'amplitude_median': -20,
+}
+
 
 def setup_logger(output_dir):
     log_file = Path(output_dir) / "report_generation.log"
@@ -33,12 +40,7 @@ def setup_logger(output_dir):
 
 
 def apply_curation_logic(metrics, user_thresholds=None, logger=None):
-    defaults = {
-        'presence_ratio':   0.75,
-        'rp_contamination': 0.15,
-        'firing_rate':      0.05,
-        'amplitude_median': -20,
-    }
+    defaults = DEFAULT_THRESHOLDS.copy()
     if user_thresholds:
         defaults.update(user_thresholds)
 
@@ -57,7 +59,7 @@ def apply_curation_logic(metrics, user_thresholds=None, logger=None):
 
     if logger:
         logger.info(f"Curation: {sum(keep_mask)}/{len(metrics)} units passed")
-    return metrics[keep_mask], pd.DataFrame(rejections)
+    return metrics.loc[np.asarray(keep_mask, dtype=bool)], pd.DataFrame(rejections)
 
 
 def plot_probe_locations(recording, unit_ids, locations, filename, output_dir, logger):
@@ -179,14 +181,12 @@ def main():
         logger.info(f"Curation: {len(clean_units)} / {len(q_metrics)} units passed")
 
     if len(clean_units) == 0:
-        logger.warning("No units passed curation. Exiting.")
-        sys.exit(0)
-
-    mask = np.isin(analyzer.unit_ids, clean_units)
-    plot_probe_locations(analyzer.recording, clean_units, locations[mask],
-                         f"locations_{len(clean_units)}_units.pdf", output_dir, logger)
-
-    plot_waveforms_grid(analyzer, clean_units, output_dir, logger)
+        logger.warning("No units passed curation. Saving an explicit empty result.")
+    else:
+        mask = np.isin(analyzer.unit_ids, clean_units)
+        plot_probe_locations(analyzer.recording, clean_units, locations[mask],
+                             f"locations_{len(clean_units)}_units.pdf", output_dir, logger)
+        plot_waveforms_grid(analyzer, clean_units, output_dir, logger)
 
     logger.info("Saving spike_times.npy for burst detection...")
     try:
@@ -210,7 +210,8 @@ def main():
         "n_units_total":     int(len(q_metrics)),
         "n_units_curated":   int(len(clean_units)),
         "curation_applied":  not args.no_curation,
-        "thresholds_used":   user_thresholds,
+        "thresholds_used":   {**DEFAULT_THRESHOLDS, **(user_thresholds or {})},
+        "status":            "ok" if len(clean_units) else "no_curated_units",
         "spike_times_saved": str(output_dir / "spike_times.npy"),
     }
     with open(output_dir / "report_summary.json", "w") as f:

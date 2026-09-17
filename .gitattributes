@@ -1,0 +1,3 @@
+# Preserve upstream formatting in the two vendored capsule sources.
+capsules/preprocessing/code/run_capsule.py whitespace=-blank-at-eol
+capsules/nwb_ecephys/code/run_capsule.py whitespace=-blank-at-eol

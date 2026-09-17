@@ -1,5 +1,8 @@
 # Nextflow/cache/runtime
 .nextflow/
+.nextflow.log*
+__pycache__/
+*.pyc
 work/
 nextflow_work/
 results/

@@ -1,0 +1,5 @@
+# Validation only; processing images and their scientific dependencies stay unchanged.
+pynwb==4.2.0
+hdmf==6.2.0
+hdmf-zarr==0.13.0
+platformdirs==4.11.9
