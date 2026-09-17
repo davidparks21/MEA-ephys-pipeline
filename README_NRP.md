@@ -4,6 +4,39 @@ The Nextflow driver and processing tasks run as Kubernetes Jobs sharing a
 ReadWriteMany PVC. `pipeline/nextflow_nrp.config` provides CPU and GPU profiles;
 `scripts/nrp/` contains submission and synthetic-test helpers.
 
+## Separation from NERSC
+
+NRP is selected explicitly with `-C pipeline/nextflow_nrp.config`. Its Kubernetes
+settings, GPU allocation, image digests, thread limits, and runtime/plugin setup
+are confined to that configuration and `scripts/nrp/`. The existing NERSC
+configuration, launchers, Conda environment and Nextflow 23.08.0-edge pin are
+unchanged. NERSC does not need Kubernetes, the NRP driver, or NRP environment
+variables.
+
+NRP sets the capsule worker and BLAS/OpenMP/Numba limits from each task's allocated
+CPUs using a `beforeScript` hook. Other backends retain their existing environment
+and the original Slurm-specific worker handling. NRP also enables
+`params.publish_overwrite = true` so resumes refresh published copies. Without
+that override, the shared workflow preserves Nextflow's defaults: overwrite on a
+normal run, but keep existing published files on a resumed run.
+
+The shared workflow still includes correctness fixes that also affect NERSC:
+
+| Shared fix | Behavior to review on NERSC |
+| --- | --- |
+| Preprocessing and LFP dtype guards | Convert unsigned recordings only; signed recordings no longer fail the conversion. |
+| Input/output and parameter handling | Honor explicit paths consistently, retain environment fallbacks, and reject malformed stage JSON. |
+| Corrected no-motion JSON | Pass the nested settings to Kilosort; settings previously ignored now take effect and can change sorting results. |
+| Vendored pinned capsules | Run this checkout's preprocessing/NWB code with the dtype guards; licenses and original pins are retained. |
+| Report/burst staging and inputs | Use this checkout's code and one explicit analyzer/spike dictionary per recording; publish under `reports/<recording>/` and `bursts/<recording>/`. |
+| Empty report/burst results | Save explicit empty outputs when no units survive, preserving the curation thresholds. |
+| Optional device/publication controls | Device selection stays automatic unless requested; publication uses the backend's optional overwrite setting. |
+
+These fixes remain shared to keep one processing implementation. Separating them
+would duplicate workflow/capsule logic or preserve known failures on one backend.
+The NRP config alone has not been validated as a drop-in for an unmodified partner
+checkout; share this branch together with the config and this guide.
+
 ## Requirements
 
 - Python 3 and `kubectl` on the control machine, with access to context `nautilus`.
@@ -96,6 +129,7 @@ outputs on resume; wait for all file transfers to finish before validating.
 | `--results_path` | Publication directory; falls back to `RESULTS_PATH`, then `<launchDir>/results`. |
 | `--params_file` | Nested stage JSON, such as `scripts/params_no_motion.json`; distinct from Nextflow's `-params-file`. |
 | `--torch_device` | `cpu` or `cuda` for Kilosort4; selected by the CPU/GPU profiles. |
+| `--publish_overwrite` | Optional `true`/`false`; unset preserves Nextflow's defaults. NRP config sets `true`. |
 
 All tasks must see the input and serialized recording dependencies, normally on
 the shared PVC. Capsule JSON can replace defaults, so provide complete settings.
@@ -123,3 +157,46 @@ preserve symlinks and serialized recording paths; restore the original root or
 remap paths to reuse analyzers and caches. Kubernetes evidence is collected under
 ignored `logs/nrp/<test-id>/`. Test resources carry the label `mea-test=<test-id>`;
 use that label to scope cleanup after all Jobs finish and artifacts are retained.
+
+## Compatibility checks and NERSC handoff
+
+After fixture preparation, the focused checks can run as finite NRP Jobs:
+
+```bash
+python3 scripts/nrp/submit.py --test-id "$TEST_ID" job compat-nrp \
+  --image driver --driver --deadline 2400 \
+  --command 'python3 -u {source}/scripts/nrp/check_compatibility.py nrp'
+python3 scripts/nrp/submit.py --test-id "$TEST_ID" job compat-nersc \
+  --image driver --deadline 2400 \
+  --command 'python3 -u {source}/scripts/nrp/check_compatibility.py nersc'
+```
+
+The first checks the real NRP task environment at 1, 2 and 4 CPUs. Both check
+publication and cached resumes with default, enabled and disabled overwriting.
+The second downloads checksum-pinned Java 17 and Nextflow 23.08.0-edge into an
+isolated ephemeral test cache, previews the shared workflow with the NERSC launch arguments,
+and checks environment fallbacks and invalid JSON. Its tiny shell-only execution
+tests explicitly disable Shifter. Results are under `validation/compatibility-*.json`;
+commands, logs and task files are under `probes/compatibility/`.
+
+**A real NERSC/Shifter smoke test is still required.** The NRP checks do not
+validate NERSC GPU exposure, Shifter mounts or filesystem behavior. For that test:
+
+1. Use a separate checkout of this branch on NERSC. Follow `README_NERSC.md` and
+   run the existing setup script; retain its Nextflow 23.08.0-edge installation.
+2. Create that checkout's ignored `run_config.env` from the existing example.
+   Set the usual account and a **fresh** `PROJECT_DIR`, keeping previous runs intact.
+   Put one supported NWB recording in `DATA_DIR`; retain the original input.
+3. Run `bash scripts/run_nersc.sh` unchanged. Check that all stages complete,
+   Kilosort uses the allocated GPU, and effective worker settings fit the allocation.
+   Confirm analyzer, report/burst and NWB outputs are readable. Empty curated
+   results are valid if the input does not pass the existing thresholds.
+4. Run the same launcher again after completion and check cached task reuse.
+   Existing published files should remain unchanged under NERSC's default resume
+   policy; use a fresh results directory when comparing new processing changes.
+5. Retain the Slurm stdout/stderr, Nextflow log/trace, task `.command.*` files,
+   runtime versions and effective sorter settings. Compare with the established
+   lab run, accounting for the shared fixes listed above.
+
+Do not run two drivers in the same launch/work directory concurrently. NRP and
+older-runtime checks must be reported separately from this pending NERSC test.

@@ -5,6 +5,8 @@ params.ecephys_path = System.getenv('DATA_PATH') ?: System.getenv('DATA_DIR')
 params.results_path = System.getenv('RESULTS_PATH') ?: "${launchDir}/results"
 params.params_file = null
 params.torch_device = null
+// null preserves Nextflow's normal/resume defaults; backends can opt in.
+params.publish_overwrite = null
 
 // Git repository prefix - can be overridden via command line or environment variable
 params.git_repo_prefix = System.getenv('GIT_REPO_PREFIX') ?: 'https://github.com/AllenNeuralDynamics/aind-'
@@ -207,9 +209,6 @@ process job_dispatch {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -260,9 +259,6 @@ process preprocessing {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -302,9 +298,6 @@ process spikesort_kilosort25 {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -345,9 +338,6 @@ process spikesort_kilosort4 {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -388,9 +378,6 @@ process spikesort_spykingcircus2 {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -431,9 +418,6 @@ process spikesort_lupin {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -477,9 +461,6 @@ process postprocessing {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -520,9 +501,6 @@ process curation {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -568,9 +546,6 @@ process visualization {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -600,7 +575,7 @@ process results_collector {
     tag 'result-collector'
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-base:${params.container_tag}"
 
-    publishDir "${params.results_path}", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: true
+    publishDir "${params.results_path}", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: params.publish_overwrite
 
     input:
     val max_duration_minutes
@@ -621,9 +596,6 @@ process results_collector {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -664,9 +636,6 @@ process quality_control {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -696,7 +665,7 @@ process quality_control_collector {
     tag 'qc-collector'
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-base:${params.container_tag}"
 
-    publishDir "${params.results_path}", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: true
+    publishDir "${params.results_path}", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: params.publish_overwrite
 
     input:
     val max_duration_minutes
@@ -709,9 +678,6 @@ process quality_control_collector {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -753,9 +719,6 @@ process nwb_ecephys {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -784,7 +747,7 @@ process nwb_units {
     tag 'nwb-units'
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-nwb:${params.container_tag}"
 
-    publishDir "${params.results_path}/nwb", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: true
+    publishDir "${params.results_path}/nwb", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: params.publish_overwrite
 
     input:
     val max_duration_minutes
@@ -800,9 +763,6 @@ process nwb_units {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
-    export MKL_NUM_THREADS=${task.cpus} NUMBA_NUM_THREADS=${task.cpus}
 
     mkdir -p capsule
     mkdir -p capsule/data
@@ -829,7 +789,7 @@ process nwb_units {
 process report_generation {
     tag { "report-generation:${recording_id}" }
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-base:${params.container_tag}"
-    publishDir "${params.results_path}/reports", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: true
+    publishDir "${params.results_path}/reports", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: params.publish_overwrite
 
     input:
     tuple val(recording_id), path(analyzer, stageAs: 'capsule/data/analyzer.zarr')
@@ -842,8 +802,6 @@ process report_generation {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
     mkdir -p 'capsule/results/${recording_id}'
     python -m pip install openpyxl==3.1.5 --no-deps -q --no-cache-dir --target capsule/pydeps
     python -m pip install et-xmlfile==2.0.0 --no-deps -q --no-cache-dir --target capsule/pydeps
@@ -858,7 +816,7 @@ process report_generation {
 process burst_detection {
     tag { "burst-detection:${recording_id}" }
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-base:${params.container_tag}"
-    publishDir "${params.results_path}/bursts", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: true
+    publishDir "${params.results_path}/bursts", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: params.publish_overwrite
 
     input:
     tuple val(recording_id), path(spike_times, stageAs: 'capsule/data/spike_times.npy')
@@ -871,8 +829,6 @@ process burst_detection {
     """
     #!/usr/bin/env bash
     set -e
-    export CO_CPUS=${task.cpus} N_JOBS_EXT=${task.cpus}
-    export OMP_NUM_THREADS=${task.cpus} OPENBLAS_NUM_THREADS=${task.cpus}
     mkdir -p 'capsule/results/${recording_id}'
     python capsule/code/run_capsule.py \
         --spike-times capsule/data/spike_times.npy \

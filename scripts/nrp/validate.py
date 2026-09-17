@@ -64,6 +64,28 @@ def single_sort(device):
     print(json.dumps(result, indent=2))
 
 
+def workflow_comparison():
+    """Compare the two full workflows against the established fixture baseline."""
+    sortings = {}
+    result = {}
+    for device in ("cpu", "gpu"):
+        paths = list((ROOT / "runs" / device / "results/postprocessed").glob("*.zarr"))
+        assert len(paths) == 1
+        sorting = si.load_sorting_analyzer(paths[0]).sorting
+        sortings[device] = sorting
+        result[device] = check_sorting(sorting)
+        assert result[device]["units"] == 15 and result[device]["spikes"] == 40440
+        assert result[device]["well_detected_gt_units"] == 15
+    comparison = si.compare_two_sorters(sortings["cpu"], sortings["gpu"])
+    matched = [(left, right) for left, right in comparison.hungarian_match_12.items() if right >= 0]
+    assert len(matched) == 15
+    assert all(np.array_equal(sortings["cpu"].get_unit_spike_train(left),
+                              sortings["gpu"].get_unit_spike_train(right)) for left, right in matched)
+    result["exact_matched_spike_trains"] = len(matched)
+    (OUT / "workflow-comparison.json").write_text(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2))
+
+
 def analyzers(devices=("cpu", "gpu")):
     """Run in the base image, matching the analyzer extension pickle versions."""
     result = {}
@@ -167,7 +189,7 @@ def full(devices=("cpu", "gpu")):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=("paired", "analyzers", "full", "sorting"))
+    parser.add_argument("phase", choices=("paired", "analyzers", "full", "sorting", "compare-workflows"))
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     parser.add_argument("--workflow-device", choices=("cpu", "gpu"),
                         help="Validate one completed workflow before the other finishes")
@@ -184,6 +206,8 @@ if __name__ == "__main__":
         single_sort(args.device)
     elif args.phase == "paired":
         paired()
+    elif args.phase == "compare-workflows":
+        workflow_comparison()
     else:
         check = analyzers if args.phase == "analyzers" else full
         check((args.workflow_device,) if args.workflow_device else ("cpu", "gpu"))

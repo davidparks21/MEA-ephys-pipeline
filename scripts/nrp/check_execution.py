@@ -83,6 +83,12 @@ for device in ((options.workflow_device,) if options.workflow_device else ("cpu"
         image = "ks4" if name == "spikesort_kilosort4" else "nwb" if name.startswith("nwb_") else "base"
         assert row["container"] == IMAGES[image], (name, row["container"])
         resources[name] = check_resources(name, row, device)
+        wrapper = (task_folder(run, row["hash"]) / ".command.run").read_text()
+        for first, second in (("CO_CPUS", "N_JOBS_EXT"),
+                              ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS"),
+                              ("MKL_NUM_THREADS", "NUMBA_NUM_THREADS")):
+            assert f"export {first}={row['cpus']} {second}={row['cpus']}" in wrapper, \
+                f"Missing NRP task CPU limits: {device}/{name}/{first}"
     sorter = task_folder(run, tasks["spikesort_kilosort4"]["hash"])
     line = next(line for line in (sorter / ".command.sh").read_text().splitlines()
                 if line.strip().startswith("./run --params "))
@@ -103,6 +109,7 @@ for device in ((options.workflow_device,) if options.workflow_device else ("cpu"
                       "hashes": {name: row["hash"] for name, row in tasks.items()},
                       "sorter_device": settings["sorter"]["torch_device"],
                       "resources": resources,
+                      "nrp_thread_hook_matches_task_cpus": True,
                       "publication_matches_latest_tasks": True}
 
 if len(result) == 2:
