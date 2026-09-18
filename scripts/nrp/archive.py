@@ -22,7 +22,7 @@ def include(member):
 
 
 with tarfile.open(archive, "w:gz", compresslevel=1, dereference=False) as output:
-    for folder in ("data", "probes", "paired", "runs", "source", "validation"):
+    for folder in ("data", "config", "runtime", "probes", "paired", "runs", "source", "validation"):
         if (root / folder).exists():
             output.add(root / folder, arcname=folder, filter=include)
     (root / "inventory.json").write_text(json.dumps(inventory, indent=2))

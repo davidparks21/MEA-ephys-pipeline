@@ -63,7 +63,8 @@ def main():
     parser.add_argument("--test-id", required=True, help="Unique lowercase Kubernetes name, <=35 characters")
     parser.add_argument("--namespace", default="braingeneers")
     sub = parser.add_subparsers(dest="action", required=True)
-    sub.add_parser("init")
+    init = sub.add_parser("init")
+    init.add_argument("--storage", default="20Gi", help="Dedicated workspace size; increase for real recordings")
     sub.add_parser("status")
     sub.add_parser("collect-logs")
     job = sub.add_parser("job")
@@ -93,7 +94,7 @@ def main():
         obj = {"apiVersion": "v1", "kind": "PersistentVolumeClaim",
                "metadata": {"name": pvc, "labels": labels},
                "spec": {"accessModes": ["ReadWriteMany"], "storageClassName": "rook-cephfs",
-                        "resources": {"requests": {"storage": "20Gi"}}}}
+                        "resources": {"requests": {"storage": args.storage}}}}
         apply_record(args.namespace, obj, logdir)
         return
     if args.action in ("status", "collect-logs"):

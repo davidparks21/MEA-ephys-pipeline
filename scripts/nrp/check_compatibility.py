@@ -20,8 +20,10 @@ ROOT = Path(os.environ["TEST_ROOT"])
 SOURCE = Path(os.environ["SOURCE_DIR"])
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("mode", choices=("nrp", "nersc"))
+parser.add_argument("--label", help="Separate evidence directory for repeated compatibility checks")
 args = parser.parse_args()
-folder = ROOT / "probes" / "compatibility" / args.mode
+label = args.label or args.mode
+folder = ROOT / "probes" / "compatibility" / label
 folder.mkdir(parents=True, exist_ok=True)
 (ROOT / "validation").mkdir(exist_ok=True)
 workflow = (SOURCE / "pipeline/main_multi_backend.nf").read_text()
@@ -221,5 +223,8 @@ for policy in ("default", "true", "false"):
     result["checks"][f"publication_{policy}"] = {"initial": initial.strip(), "resume": resumed.strip(),
                                                    "task_cached": True, "no_thread_exports": True}
 
-(ROOT / "validation" / f"compatibility-{args.mode}.json").write_text(json.dumps(result, indent=2))
+run("parameter-cache", ["python3", str(SOURCE / "scripts/nrp/check_parameter_cache.py"),
+                         "--executable", command_prefix[0], "--label", label], folder)
+result["checks"]["parameter_and_pin_cache_invalidation"] = "passed"
+(ROOT / "validation" / f"compatibility-{label}.json").write_text(json.dumps(result, indent=2))
 print(json.dumps({"mode": args.mode, "checks": result["checks"]}, indent=2))
