@@ -640,15 +640,8 @@ if __name__ == "__main__":
                             recording_lfp = spre.resample(recording_lfp, lfp_sampling_rate)
                             recording_lfp = spre.astype(recording_lfp, dtype="int16")
 
-                            # there is a bug in with sample mismatches for the last chunk if num_samples not divisible by chunk_size
-                            # the workaround is to discard the last samples to make it "even"
-                            if recording.get_num_segments() == 1:
-                                recording_lfp = recording_lfp.frame_slice(
-                                    start_frame=0,
-                                    end_frame=int(
-                                        recording_lfp.get_num_samples() // lfp_sampling_rate * lfp_sampling_rate
-                                    ),
-                                )
+                            # Preserve the fractional final second as well. The
+                            # pinned resampler supports partial output chunks.
                             # set times
                             lfp_period = 1.0 / lfp_sampling_rate
                             for sg_idx in range(recording.get_num_segments()):
@@ -691,10 +684,10 @@ if __name__ == "__main__":
                                 logging.info(f"Could not find {probe_device_name} in surface channel dictionary")
 
                         # spatial subsampling from allensdk - keep every nth channel
+                        channel_ids_to_keep = None
                         if SPATIAL_CHANNEL_SUBSAMPLING_FACTOR > 1:
                             logging.info(f"\t\tSpatial subsampling factor: {SPATIAL_CHANNEL_SUBSAMPLING_FACTOR}")
                             channel_ids_to_keep = channel_ids[0 : len(channel_ids) : SPATIAL_CHANNEL_SUBSAMPLING_FACTOR]
-                            recording_lfp = recording_lfp.select_channels(channel_ids_to_keep)
 
                         # time subsampling/decimate
                         if TEMPORAL_SUBSAMPLING_FACTOR > 1:
@@ -716,6 +709,14 @@ if __name__ == "__main__":
                             recording_lfp = recording_lfp.save(
                                 folder=scratch_folder / f"{recording_name}-LFP", verbose=False, overwrite=True,
                             )
+
+                        # Read contiguous channels while filtering/materializing.
+                        # An index list pushed into a compressed NWB reader can
+                        # make HDF5 allocate gigabytes for a small time window.
+                        # These filters act independently on each channel, so
+                        # selecting the same channels afterward preserves them.
+                        if channel_ids_to_keep is not None:
+                            recording_lfp = recording_lfp.select_channels(channel_ids_to_keep)
 
                         logging.info(f"\tAdding LFP recording {recording_lfp}")
                         add_recording_to_nwbfile(

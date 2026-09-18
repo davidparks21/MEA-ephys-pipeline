@@ -1,3 +1,11 @@
-# Preserve upstream formatting in the two vendored capsule sources.
+# Preserve upstream formatting in vendored capsule sources.
+capsules/job_dispatch/code/run_capsule.py whitespace=-blank-at-eol
+capsules/kilosort4/code/run_capsule.py whitespace=-blank-at-eol
+capsules/postprocessing/code/run_capsule.py whitespace=-blank-at-eol
+capsules/postprocessing/code/params.json whitespace=-blank-at-eol
+capsules/visualization/code/run_capsule.py whitespace=-blank-at-eol
+capsules/visualization/code/params.json whitespace=-blank-at-eol
 capsules/preprocessing/code/run_capsule.py whitespace=-blank-at-eol
 capsules/nwb_ecephys/code/run_capsule.py whitespace=-blank-at-eol
+capsules/nwb_units/code/run_capsule.py whitespace=-blank-at-eol
+capsules/nwb_units/code/utils.py whitespace=-blank-at-eol

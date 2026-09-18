@@ -11,8 +11,11 @@ params.publish_overwrite = null
 // Git repository prefix - can be overridden via command line or environment variable
 params.git_repo_prefix = System.getenv('GIT_REPO_PREFIX') ?: 'https://github.com/AllenNeuralDynamics/aind-'
 
-// Helper function for git cloning
-def gitCloneFunction = '''
+// Script-binding variables used by tasks must be visible to Nextflow's cache.
+// With the legacy parser, `def` locals captured by a process closure are not
+// hashed as globals; changing stage JSON or capsule pins could reuse old work.
+// Assign these once before the workflow starts; do not mutate them in operators.
+gitCloneFunction = '''
 clone_repo() {
     local repo_url="$1"
     local commit_hash="$2"
@@ -49,7 +52,7 @@ if (params.params_file) {
 
 // get commit hashes for capsules
 params.capsule_versions = "${baseDir}/capsule_versions.env"
-def versions = [:]
+versions = [:]
 file(params.capsule_versions).eachLine { line ->
     def (key, value) = line.tokenize('=')
     versions[key] = value
@@ -97,42 +100,42 @@ if (params.params_file) {
 }
 
 // Initialize args variables with params from JSON file or command line args
-def job_dispatch_args = ""
+job_dispatch_args = ""
 if (params.params_file && json_params.job_dispatch) {
     job_dispatch_args = "--params '${groovy.json.JsonOutput.toJson(json_params.job_dispatch)}'"
 } else if ("job_dispatch_args" in params_keys && params.job_dispatch_args instanceof String) {
     job_dispatch_args = params.job_dispatch_args
 }
 
-def preprocessing_args = ""
+preprocessing_args = ""
 if (params.params_file && json_params.preprocessing) {
     preprocessing_args = "--params '${groovy.json.JsonOutput.toJson(json_params.preprocessing)}'"
 } else if ("preprocessing_args" in params_keys && params.preprocessing_args instanceof String) {
     preprocessing_args = params.preprocessing_args
 }
 
-def postprocessing_args = ""
+postprocessing_args = ""
 if (params.params_file && json_params.postprocessing) {
     postprocessing_args = "--params '${groovy.json.JsonOutput.toJson(json_params.postprocessing)}'"
 } else if ("postprocessing_args" in params_keys && params.postprocessing_args instanceof String) {
     postprocessing_args = params.postprocessing_args
 }
 
-def curation_args = ""
+curation_args = ""
 if (params.params_file && json_params.curation) {
     curation_args = "--params '${groovy.json.JsonOutput.toJson(json_params.curation)}'"
 } else if ("curation_args" in params_keys && params.curation_args instanceof String) {
     curation_args = params.curation_args
 }
 
-def visualization_kwargs = ""
+visualization_kwargs = ""
 if (params.params_file && json_params.visualization) {
     visualization_kwargs = "--params '${groovy.json.JsonOutput.toJson(json_params.visualization)}'"
 } else if ("visualization_kwargs" in params_keys && params.visualization_kwargs instanceof String) {
     visualization_kwargs = params.visualization_kwargs
 }
 
-def nwb_ecephys_args = ""
+nwb_ecephys_args = ""
 if (params.params_file && json_params.nwb?.ecephys) {
     nwb_ecephys_args = "--params '${groovy.json.JsonOutput.toJson(json_params.nwb.ecephys)}'"
 } else if ("nwb_ecephys_args" in params_keys && params.nwb_ecephys_args instanceof String) {
@@ -147,7 +150,7 @@ if (params.params_file && json_params.spikesorting) {
 
 sorter = sorter ?: params.get('sorter', 'kilosort4')
 
-def spikesorting_args = ""
+spikesorting_args = ""
 if (params.params_file && json_params.spikesorting) {
     def sorter_params = json_params.spikesorting[sorter]
     if (sorter_params) {
@@ -198,6 +201,7 @@ process job_dispatch {
     container container_name
 
     input:
+    path local_code, stageAs: 'capsule-source'
     path input_folder, stageAs: 'capsule/data/ecephys_session'
     
     output:
@@ -221,9 +225,9 @@ process job_dispatch {
 
     TASK_DIR=\$(pwd)
 
-    echo "[${task.tag}] cloning git repo..."
-    ${gitCloneFunction}
-    clone_repo "${params.git_repo_prefix}ephys-job-dispatch.git" "${versions['JOB_DISPATCH']}"
+    echo "[${task.tag}] staging local capsule code..."
+    cp -rL capsule-source capsule/code
+    # Vendored at the original pin; see capsules/job_dispatch/UPSTREAM.md.
 
     echo "[${task.tag}] running capsule..."
     cd capsule/code
@@ -328,6 +332,7 @@ process spikesort_kilosort4 {
     container "ghcr.io/allenneuraldynamics/aind-ephys-spikesort-kilosort4:${params.container_tag}"
 
     input:
+    path local_code, stageAs: 'capsule-source'
     val max_duration_minutes
     path preprocessing_results, stageAs: 'capsule/data/*'
 
@@ -350,9 +355,9 @@ process spikesort_kilosort4 {
         export N_JOBS_EXT=${task.cpus}
     fi
 
-    echo "[${task.tag}] cloning git repo..."
-    ${gitCloneFunction}
-    clone_repo "${params.git_repo_prefix}ephys-spikesort-kilosort4.git" "${versions['SPIKESORT_KS4']}"
+    echo "[${task.tag}] staging local capsule code..."
+    cp -rL capsule-source capsule/code
+    # Vendored at the original pin; see capsules/kilosort4/UPSTREAM.md.
 
     echo "[${task.tag}] running capsule..."
     cd capsule/code
@@ -448,6 +453,7 @@ process postprocessing {
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-base:${params.container_tag}"
 
     input:
+    path local_code, stageAs: 'capsule-source'
     val max_duration_minutes
     path ecephys_session_input, stageAs: 'capsule/data/ecephys_session'
     path job_dispatch_results, stageAs: 'capsule/data/*'
@@ -473,9 +479,9 @@ process postprocessing {
         export N_JOBS_EXT=${task.cpus}
     fi
 
-    echo "[${task.tag}] cloning git repo..."
-    ${gitCloneFunction}
-    clone_repo "${params.git_repo_prefix}ephys-postprocessing.git" "${versions['POSTPROCESSING']}"
+    echo "[${task.tag}] staging local capsule code..."
+    cp -rL capsule-source capsule/code
+    # Vendored at the original pin; see capsules/postprocessing/UPSTREAM.md.
 
     echo "[${task.tag}] running capsule..."
     cd capsule/code
@@ -531,6 +537,7 @@ process visualization {
     container "ghcr.io/allenneuraldynamics/aind-ephys-pipeline-base:${params.container_tag}"
 
     input:
+    path local_code, stageAs: 'capsule-source'
     val max_duration_minutes
     path ecephys_session_input, stageAs: 'capsule/data/ecephys_session'
     path job_dispatch_results, stageAs: 'capsule/data/*'
@@ -558,9 +565,9 @@ process visualization {
         export N_JOBS_EXT=${task.cpus}
     fi
 
-    echo "[${task.tag}] cloning git repo..."
-    ${gitCloneFunction}
-    clone_repo "${params.git_repo_prefix}ephys-visualization.git" "${versions['VISUALIZATION']}"
+    echo "[${task.tag}] staging local capsule code..."
+    cp -rL capsule-source capsule/code
+    # Vendored at the original pin; see capsules/visualization/UPSTREAM.md.
 
     echo "[${task.tag}] running capsule..."
     cd capsule/code
@@ -750,6 +757,7 @@ process nwb_units {
     publishDir "${params.results_path}/nwb", saveAs: { filename -> new File(filename).getName() }, mode: 'copy', overwrite: params.publish_overwrite
 
     input:
+    path local_code, stageAs: 'capsule-source'
     val max_duration_minutes
     path ecephys_session_input, stageAs: 'capsule/data/ecephys_session'
     path job_dispatch_results, stageAs: 'capsule/data/*'
@@ -769,9 +777,9 @@ process nwb_units {
     mkdir -p capsule/results
     mkdir -p capsule/scratch
 
-    echo "[${task.tag}] cloning git repo..."
-    ${gitCloneFunction}
-    clone_repo "${params.git_repo_prefix}units-nwb.git" "${versions['NWB_UNITS']}"
+    echo "[${task.tag}] staging local capsule code..."
+    cp -rL capsule-source capsule/code
+    # Vendored at the original pin; see capsules/nwb_units/UPSTREAM.md.
 
     if [[ ${params.executor} == "slurm" ]]; then
         echo "[${task.tag}] allocated task time: ${task.time}"
@@ -842,7 +850,10 @@ workflow {
     ecephys_ch = Channel.fromPath(params.ecephys_path, type: 'dir', checkIfExists: true)
 
     // Job dispatch
-    job_dispatch_out = job_dispatch(ecephys_ch.collect())
+    job_dispatch_out = job_dispatch(
+        Channel.value(file("${baseDir}/../capsules/job_dispatch/code")),
+        ecephys_ch.collect()
+    )
 
     max_duration_file = job_dispatch_out.max_duration_file
     max_duration_minutes = max_duration_file.map { it.text.trim() }
@@ -865,6 +876,7 @@ workflow {
         )
     } else if (sorter == 'kilosort4') {
         spikesort_out = spikesort_kilosort4(
+            Channel.value(file("${baseDir}/../capsules/kilosort4/code")),
             max_duration_minutes,
             preprocessing_out.results
         )
@@ -884,6 +896,7 @@ workflow {
 
     // Postprocessing
     postprocessing_out = postprocessing(
+        Channel.value(file("${baseDir}/../capsules/postprocessing/code")),
         max_duration_minutes,
         ecephys_ch.collect(),
         job_dispatch_out.results.flatten(),
@@ -899,6 +912,7 @@ workflow {
 
     // Visualization
     visualization_out = visualization(
+        Channel.value(file("${baseDir}/../capsules/visualization/code")),
         max_duration_minutes,
         ecephys_ch.collect(),
         job_dispatch_out.results.collect(),
@@ -973,6 +987,7 @@ workflow {
 
     // NWB units
     nwb_units(
+        Channel.value(file("${baseDir}/../capsules/nwb_units/code")),
         max_duration_minutes,
         ecephys_ch.collect(),
         job_dispatch_out.results.collect(),

@@ -211,7 +211,8 @@ def main():
         "n_units_curated":   int(len(clean_units)),
         "curation_applied":  not args.no_curation,
         "thresholds_used":   {**DEFAULT_THRESHOLDS, **(user_thresholds or {})},
-        "status":            "ok" if len(clean_units) else "no_curated_units",
+        "status":            "no_detected_units" if len(q_metrics) == 0 else
+                             "ok" if len(clean_units) else "no_curated_units",
         "spike_times_saved": str(output_dir / "spike_times.npy"),
     }
     with open(output_dir / "report_summary.json", "w") as f:
