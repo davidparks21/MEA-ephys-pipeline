@@ -286,6 +286,11 @@ python3 scripts/nrp/submit.py --test-id "$TEST_ID" job archive \
   --command 'python3 -u {source}/scripts/nrp/archive.py'
 ```
 
+The 7,200-second archive deadline is for the small fixture. Full recordings and
+retained debugging work directories can take several hours on shared storage;
+use a larger finite deadline, such as `--deadline 28800`, and allow time for the
+final checksum pass. The archive command prints its manifest only when finished.
+
 The archive and checksum manifest are written to
 `/workspace/<test-id>/artifacts.tar.gz` and `archive.json`. Copy them to durable
 storage and verify the checksum before deleting the dedicated PVC. Archives
